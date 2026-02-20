@@ -1,6 +1,6 @@
 from typing import Any, Callable
 
-from tools.python_exec import safe_python_exec
+from tools.python_exec import reset_execution_context, safe_python_exec
 
 
 TOOL_REGISTRY: dict[str, Callable[[str], Any]] = {
@@ -11,6 +11,7 @@ TOOL_REGISTRY: dict[str, Callable[[str], Any]] = {
 
 def execute_plan(plan: Any) -> list[dict[str, Any]]:
     results: list[dict[str, Any]] = []
+    reset_execution_context()
 
     if not isinstance(plan, dict) or not isinstance(plan.get("steps"), list):
         print("No executable steps found in plan.")
@@ -66,6 +67,20 @@ def execute_plan(plan: Any) -> list[dict[str, Any]]:
 
         try:
             result = tool_fn(code)
+            if isinstance(result, dict) and isinstance(result.get("error"), str):
+                error_message = result["error"]
+                print(f"Result: {error_message}")
+                results.append(
+                    {
+                        "step": index,
+                        "description": description,
+                        "tool": tool_name,
+                        "status": "error",
+                        "error": error_message,
+                    }
+                )
+                continue
+
             print(f"Result: {result}")
             results.append(
                 {

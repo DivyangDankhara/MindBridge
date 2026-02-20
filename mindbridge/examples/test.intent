@@ -1,0 +1,3 @@
+TASK: run python calculation
+GOAL: compute factorial of 5
+OUTPUT: number
