@@ -1,6 +1,7 @@
 from pathlib import Path
 
 from config import DEFAULT_MODEL
+from evaluator.evaluator import evaluate_goal
 from executor.tool_registry import execute_plan
 from intent.parser import parse_intent_file
 from llm.openai_provider import OpenAIProvider
@@ -20,6 +21,12 @@ def main() -> None:
         print("\nExecution results:")
         for item in execution_results:
             print(item)
+
+        evaluation = evaluate_goal(intent, execution_results, llm)
+        print("\nGoal evaluation:")
+        print(evaluation)
+        if not evaluation.get("goal_satisfied", False):
+            print("Goal not satisfied - replanning required")
         return
 
     if isinstance(plan, str):

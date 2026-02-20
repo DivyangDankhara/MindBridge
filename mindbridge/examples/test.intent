@@ -1,3 +1,3 @@
-TASK: test error recovery
-GOAL: divide 10 by variable x before defining it, then fix
-OUTPUT: number
+TASK: compute factorial
+GOAL: calculate factorial of 5
+OUTPUT: 120
