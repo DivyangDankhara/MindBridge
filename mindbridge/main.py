@@ -14,7 +14,19 @@ def main() -> None:
     intent = parse_intent_file(intent_path)
     llm = OpenAIProvider(model=DEFAULT_MODEL)
     plan = create_plan(intent, llm)
-    execute_plan(plan)
+
+    if isinstance(plan, dict) and isinstance(plan.get("steps"), list):
+        execution_results = execute_plan(plan)
+        print("\nExecution results:")
+        for item in execution_results:
+            print(item)
+        return
+
+    if isinstance(plan, str):
+        print(f"Planner message:\n{plan}")
+        return
+
+    print(f"Planner returned unsupported output type: {type(plan).__name__}")
 
 
 if __name__ == "__main__":
