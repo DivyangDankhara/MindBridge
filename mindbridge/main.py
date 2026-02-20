@@ -1,4 +1,5 @@
 from pathlib import Path
+import re
 
 from config import DEFAULT_MODEL
 from evaluator.evaluator import evaluate_goal
@@ -7,11 +8,14 @@ from intent.parser import parse_intent_file
 from llm.openai_provider import OpenAIProvider
 from memory.retrieval import find_similar_experiences
 from memory.schema import MissionExperience
+from memory.semantic_extractor import extract_semantic_rules
+from memory.semantic_store import load_semantic_rules, save_semantic_rule
 from memory.store import save_experience
 from planner.planner import create_plan
 
 
 MAX_MISSION_ATTEMPTS = 5
+_WORD_PATTERN = re.compile(r"[a-z0-9]+")
 
 
 def _summarize_plan(plan: object) -> str:
@@ -66,17 +70,75 @@ def _collect_failure_reasons(mission_history: list[dict[str, object]]) -> list[s
     return reasons
 
 
+def _select_relevant_semantic_rules(
+    task: str,
+    goal: str,
+    semantic_rules: list[dict[str, object]],
+    limit: int = 3,
+) -> list[dict[str, object]]:
+    if limit <= 0:
+        return []
+
+    query_text = f"{task} {goal}".lower()
+    query_terms = set(_WORD_PATTERN.findall(query_text))
+    ranked: list[tuple[float, dict[str, object]]] = []
+
+    for rule in semantic_rules:
+        if not isinstance(rule, dict):
+            continue
+        rule_text = rule.get("rule")
+        context_text = rule.get("context")
+        confidence = rule.get("confidence")
+
+        if not isinstance(rule_text, str) or not rule_text.strip():
+            continue
+        if not isinstance(context_text, str):
+            context_text = ""
+
+        candidate = f"{rule_text} {context_text}".lower()
+        candidate_terms = set(_WORD_PATTERN.findall(candidate))
+        overlap = len(query_terms.intersection(candidate_terms))
+
+        score = float(overlap)
+        if query_text and (query_text in candidate):
+            score += 2.0
+
+        try:
+            score += float(confidence) * 0.5
+        except Exception:
+            pass
+
+        if score > 0:
+            ranked.append((score, rule))
+
+    ranked.sort(key=lambda item: item[0], reverse=True)
+    return [rule for _, rule in ranked[:limit]]
+
+
 def main() -> None:
     project_root = Path(__file__).parent
     intent_path = project_root / "examples" / "test.intent"
 
     intent = parse_intent_file(intent_path)
     llm = OpenAIProvider(model=DEFAULT_MODEL)
+
     relevant_experiences = find_similar_experiences(intent.task, intent.goal, limit=3)
     if relevant_experiences:
         print(f"Loaded {len(relevant_experiences)} similar past experience(s).")
     else:
         print("No similar past experiences found.")
+
+    semantic_rules = load_semantic_rules()
+    relevant_semantic_rules = _select_relevant_semantic_rules(
+        intent.task,
+        intent.goal,
+        semantic_rules,
+        limit=3,
+    )
+    if relevant_semantic_rules:
+        print(f"Loaded {len(relevant_semantic_rules)} relevant learned principle(s).")
+    else:
+        print("No relevant learned principles found.")
 
     mission_history: list[dict[str, object]] = []
     mission_accomplished = False
@@ -88,6 +150,7 @@ def main() -> None:
             llm,
             mission_history=mission_history,
             relevant_experiences=relevant_experiences,
+            semantic_rules=relevant_semantic_rules,
         )
 
         execution_results: list[dict[str, object]] = []
@@ -156,6 +219,11 @@ def main() -> None:
     )
     save_experience(experience)
     print("Mission experience saved to episodic memory.")
+
+    extracted_rules = extract_semantic_rules(experience, llm)
+    for rule_data in extracted_rules:
+        save_semantic_rule(rule_data)
+    print(f"Saved {len(extracted_rules)} semantic rule(s) to semantic memory.")
 
 
 if __name__ == "__main__":

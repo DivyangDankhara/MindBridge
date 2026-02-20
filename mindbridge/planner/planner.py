@@ -66,15 +66,35 @@ def _summarize_relevant_experiences(
     return "\n".join(lines) if lines else "- none"
 
 
+def _summarize_semantic_rules(semantic_rules: list[dict[str, Any]] | None) -> str:
+    if not semantic_rules:
+        return "* none"
+
+    lines: list[str] = []
+    for rule_data in semantic_rules[:5]:
+        if not isinstance(rule_data, dict):
+            continue
+
+        rule = rule_data.get("rule")
+        if not isinstance(rule, str) or not rule.strip():
+            continue
+
+        lines.append(f"* {rule.strip()}")
+
+    return "\n".join(lines) if lines else "* none"
+
+
 def _build_planning_prompt(
     intent: Intent,
     allowed_tools: list[str],
     mission_history: list[dict[str, Any]] | None = None,
     relevant_experiences: list[MissionExperience] | list[dict[str, Any]] | None = None,
+    semantic_rules: list[dict[str, Any]] | None = None,
 ) -> str:
     tools_text = ", ".join(allowed_tools) if allowed_tools else "none"
     failure_history_summary = _summarize_failure_history(mission_history)
     relevant_experiences_summary = _summarize_relevant_experiences(relevant_experiences)
+    semantic_rules_summary = _summarize_semantic_rules(semantic_rules)
     return (
         "You are an execution planner.\n"
         "Return ONLY valid JSON.\n"
@@ -101,7 +121,10 @@ def _build_planning_prompt(
         f"Previous Failures Summary: {failure_history_summary}\n\n"
         "Relevant past experiences:\n"
         f"{relevant_experiences_summary}\n\n"
-        "Planner must consider past successes and failures."
+        "Relevant learned principles:\n"
+        f"{semantic_rules_summary}\n\n"
+        "Planner must consider past successes and failures.\n"
+        "Planner must consider these rules."
     )
 
 
@@ -155,6 +178,7 @@ def create_plan(
     llm: LLMProvider,
     mission_history: list[dict[str, Any]] | None = None,
     relevant_experiences: list[MissionExperience] | list[dict[str, Any]] | None = None,
+    semantic_rules: list[dict[str, Any]] | None = None,
 ) -> Any:
     allowed_tools = sorted(TOOL_REGISTRY.keys())
     prompt = _build_planning_prompt(
@@ -162,6 +186,7 @@ def create_plan(
         allowed_tools,
         mission_history=mission_history,
         relevant_experiences=relevant_experiences,
+        semantic_rules=semantic_rules,
     )
     raw_plan = llm.generate(prompt)
 
