@@ -5,6 +5,7 @@ from typing import Any
 from executor.tool_registry import TOOL_REGISTRY
 from intent.schema import Intent
 from llm.base import LLMProvider
+from memory.schema import MissionExperience
 
 
 def _summarize_failure_history(mission_history: list[dict[str, Any]] | None) -> str:
@@ -42,13 +43,38 @@ def _summarize_failure_history(mission_history: list[dict[str, Any]] | None) -> 
     return " | ".join(failed_summaries[-3:])
 
 
+def _summarize_relevant_experiences(
+    relevant_experiences: list[MissionExperience] | list[dict[str, Any]] | None,
+) -> str:
+    if not relevant_experiences:
+        return "- none"
+
+    lines: list[str] = []
+    for index, item in enumerate(relevant_experiences[:3], start=1):
+        try:
+            exp = item if isinstance(item, MissionExperience) else MissionExperience.model_validate(item)
+        except Exception:
+            continue
+        tools = ", ".join(exp.tools_used[:4]) if exp.tools_used else "none"
+        failures = "; ".join(exp.failure_reasons[:2]) if exp.failure_reasons else "none"
+        lines.append(
+            f"- Experience {index}: success={exp.success}, attempts={exp.attempts}, "
+            f"task={exp.intent_task}, goal={exp.intent_goal}, tools={tools}, "
+            f"failures={failures}, result={exp.result_summary}"
+        )
+
+    return "\n".join(lines) if lines else "- none"
+
+
 def _build_planning_prompt(
     intent: Intent,
     allowed_tools: list[str],
     mission_history: list[dict[str, Any]] | None = None,
+    relevant_experiences: list[MissionExperience] | list[dict[str, Any]] | None = None,
 ) -> str:
     tools_text = ", ".join(allowed_tools) if allowed_tools else "none"
     failure_history_summary = _summarize_failure_history(mission_history)
+    relevant_experiences_summary = _summarize_relevant_experiences(relevant_experiences)
     return (
         "You are an execution planner.\n"
         "Return ONLY valid JSON.\n"
@@ -72,7 +98,10 @@ def _build_planning_prompt(
         f"Goal: {intent.goal}\n"
         f"Constraints: {intent.constraints or 'None'}\n"
         f"Expected Output: {intent.output or 'None'}\n"
-        f"Previous Failures Summary: {failure_history_summary}"
+        f"Previous Failures Summary: {failure_history_summary}\n\n"
+        "Relevant past experiences:\n"
+        f"{relevant_experiences_summary}\n\n"
+        "Planner must consider past successes and failures."
     )
 
 
@@ -125,9 +154,15 @@ def create_plan(
     intent: Intent,
     llm: LLMProvider,
     mission_history: list[dict[str, Any]] | None = None,
+    relevant_experiences: list[MissionExperience] | list[dict[str, Any]] | None = None,
 ) -> Any:
     allowed_tools = sorted(TOOL_REGISTRY.keys())
-    prompt = _build_planning_prompt(intent, allowed_tools, mission_history=mission_history)
+    prompt = _build_planning_prompt(
+        intent,
+        allowed_tools,
+        mission_history=mission_history,
+        relevant_experiences=relevant_experiences,
+    )
     raw_plan = llm.generate(prompt)
 
     try:
