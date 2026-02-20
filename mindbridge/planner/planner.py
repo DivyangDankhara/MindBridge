@@ -84,17 +84,48 @@ def _summarize_semantic_rules(semantic_rules: list[dict[str, Any]] | None) -> st
     return "\n".join(lines) if lines else "* none"
 
 
+def _summarize_procedural_strategies(procedural_strategies: list[dict[str, Any]] | None) -> str:
+    if not procedural_strategies:
+        return "* none"
+
+    lines: list[str] = []
+    for strategy in procedural_strategies[:3]:
+        if not isinstance(strategy, dict):
+            continue
+
+        strategy_name = strategy.get("strategy_name")
+        steps_template = strategy.get("steps_template")
+        applicable_context = strategy.get("applicable_context")
+
+        if not isinstance(strategy_name, str) or not strategy_name.strip():
+            continue
+        if not isinstance(steps_template, list):
+            continue
+
+        lines.append(f"* {strategy_name.strip()}")
+        if isinstance(applicable_context, str) and applicable_context.strip():
+            lines.append(f"  context: {applicable_context.strip()}")
+        lines.append("  steps:")
+        for step in steps_template[:5]:
+            if isinstance(step, str) and step.strip():
+                lines.append(f"  * {step.strip()}")
+
+    return "\n".join(lines) if lines else "* none"
+
+
 def _build_planning_prompt(
     intent: Intent,
     allowed_tools: list[str],
     mission_history: list[dict[str, Any]] | None = None,
     relevant_experiences: list[MissionExperience] | list[dict[str, Any]] | None = None,
     semantic_rules: list[dict[str, Any]] | None = None,
+    procedural_strategies: list[dict[str, Any]] | None = None,
 ) -> str:
     tools_text = ", ".join(allowed_tools) if allowed_tools else "none"
     failure_history_summary = _summarize_failure_history(mission_history)
     relevant_experiences_summary = _summarize_relevant_experiences(relevant_experiences)
     semantic_rules_summary = _summarize_semantic_rules(semantic_rules)
+    procedural_strategies_summary = _summarize_procedural_strategies(procedural_strategies)
     return (
         "You are an execution planner.\n"
         "Return ONLY valid JSON.\n"
@@ -123,8 +154,11 @@ def _build_planning_prompt(
         f"{relevant_experiences_summary}\n\n"
         "Relevant learned principles:\n"
         f"{semantic_rules_summary}\n\n"
+        "Relevant learned strategies:\n"
+        f"{procedural_strategies_summary}\n\n"
         "Planner must consider past successes and failures.\n"
-        "Planner must consider these rules."
+        "Planner must consider these rules.\n"
+        "Planner must consider adapting these strategies."
     )
 
 
@@ -179,6 +213,7 @@ def create_plan(
     mission_history: list[dict[str, Any]] | None = None,
     relevant_experiences: list[MissionExperience] | list[dict[str, Any]] | None = None,
     semantic_rules: list[dict[str, Any]] | None = None,
+    procedural_strategies: list[dict[str, Any]] | None = None,
 ) -> Any:
     allowed_tools = sorted(TOOL_REGISTRY.keys())
     prompt = _build_planning_prompt(
@@ -187,6 +222,7 @@ def create_plan(
         mission_history=mission_history,
         relevant_experiences=relevant_experiences,
         semantic_rules=semantic_rules,
+        procedural_strategies=procedural_strategies,
     )
     raw_plan = llm.generate(prompt)
 

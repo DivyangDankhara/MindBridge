@@ -6,6 +6,8 @@ from evaluator.evaluator import evaluate_goal
 from executor.tool_registry import execute_plan
 from intent.parser import parse_intent_file
 from llm.openai_provider import OpenAIProvider
+from memory.procedural_extractor import extract_procedural_strategies
+from memory.procedural_store import load_procedural_strategies, save_procedural_strategy
 from memory.retrieval import find_similar_experiences
 from memory.schema import MissionExperience
 from memory.semantic_extractor import extract_semantic_rules
@@ -115,6 +117,56 @@ def _select_relevant_semantic_rules(
     return [rule for _, rule in ranked[:limit]]
 
 
+def _select_relevant_procedural_strategies(
+    task: str,
+    goal: str,
+    strategies: list[dict[str, object]],
+    limit: int = 3,
+) -> list[dict[str, object]]:
+    if limit <= 0:
+        return []
+
+    query_text = f"{task} {goal}".lower()
+    query_terms = set(_WORD_PATTERN.findall(query_text))
+    ranked: list[tuple[float, dict[str, object]]] = []
+
+    for strategy in strategies:
+        if not isinstance(strategy, dict):
+            continue
+
+        strategy_name = strategy.get("strategy_name")
+        applicable_context = strategy.get("applicable_context")
+        steps_template = strategy.get("steps_template")
+        confidence = strategy.get("confidence")
+
+        if not isinstance(strategy_name, str) or not strategy_name.strip():
+            continue
+        if not isinstance(applicable_context, str):
+            applicable_context = ""
+        if not isinstance(steps_template, list):
+            continue
+
+        steps_text = " ".join(step.strip() for step in steps_template if isinstance(step, str) and step.strip())
+        candidate = f"{strategy_name} {applicable_context} {steps_text}".lower()
+        candidate_terms = set(_WORD_PATTERN.findall(candidate))
+        overlap = len(query_terms.intersection(candidate_terms))
+
+        score = float(overlap)
+        if query_text and (query_text in candidate):
+            score += 2.0
+
+        try:
+            score += float(confidence) * 0.5
+        except Exception:
+            pass
+
+        if score > 0:
+            ranked.append((score, strategy))
+
+    ranked.sort(key=lambda item: item[0], reverse=True)
+    return [strategy for _, strategy in ranked[:limit]]
+
+
 def main() -> None:
     project_root = Path(__file__).parent
     intent_path = project_root / "examples" / "test.intent"
@@ -140,6 +192,18 @@ def main() -> None:
     else:
         print("No relevant learned principles found.")
 
+    procedural_strategies = load_procedural_strategies()
+    relevant_procedural_strategies = _select_relevant_procedural_strategies(
+        intent.task,
+        intent.goal,
+        procedural_strategies,
+        limit=3,
+    )
+    if relevant_procedural_strategies:
+        print(f"Loaded {len(relevant_procedural_strategies)} relevant learned strategy(ies).")
+    else:
+        print("No relevant learned strategies found.")
+
     mission_history: list[dict[str, object]] = []
     mission_accomplished = False
 
@@ -151,6 +215,7 @@ def main() -> None:
             mission_history=mission_history,
             relevant_experiences=relevant_experiences,
             semantic_rules=relevant_semantic_rules,
+            procedural_strategies=relevant_procedural_strategies,
         )
 
         execution_results: list[dict[str, object]] = []
@@ -222,8 +287,14 @@ def main() -> None:
 
     extracted_rules = extract_semantic_rules(experience, llm)
     for rule_data in extracted_rules:
-        save_semantic_rule(rule_data)
+        save_semantic_rule(rule_data, llm=llm)
     print(f"Saved {len(extracted_rules)} semantic rule(s) to semantic memory.")
+
+    if mission_accomplished:
+        extracted_strategies = extract_procedural_strategies(experience, llm)
+        for strategy_data in extracted_strategies:
+            save_procedural_strategy(strategy_data)
+        print(f"Saved {len(extracted_strategies)} procedural strategy(ies) to procedural memory.")
 
 
 if __name__ == "__main__":
