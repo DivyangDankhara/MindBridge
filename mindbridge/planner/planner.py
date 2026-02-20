@@ -7,8 +7,48 @@ from intent.schema import Intent
 from llm.base import LLMProvider
 
 
-def _build_planning_prompt(intent: Intent, allowed_tools: list[str]) -> str:
+def _summarize_failure_history(mission_history: list[dict[str, Any]] | None) -> str:
+    if not mission_history:
+        return "No previous attempts."
+
+    failed_summaries: list[str] = []
+    for index, attempt in enumerate(mission_history, start=1):
+        if not isinstance(attempt, dict):
+            continue
+
+        evaluation = attempt.get("evaluation")
+        goal_satisfied = evaluation.get("goal_satisfied") if isinstance(evaluation, dict) else False
+        if goal_satisfied is True:
+            continue
+
+        reason = "No evaluation reason."
+        if isinstance(evaluation, dict) and isinstance(evaluation.get("reason"), str):
+            reason = evaluation["reason"].strip()
+
+        execution_results = attempt.get("execution_results")
+        error_count = 0
+        if isinstance(execution_results, list):
+            for item in execution_results:
+                if isinstance(item, dict) and item.get("status") in {"error", "skipped"}:
+                    error_count += 1
+
+        failed_summaries.append(
+            f"Attempt {index}: reason={reason}; execution_errors={error_count}"
+        )
+
+    if not failed_summaries:
+        return "No previous failed attempts."
+
+    return " | ".join(failed_summaries[-3:])
+
+
+def _build_planning_prompt(
+    intent: Intent,
+    allowed_tools: list[str],
+    mission_history: list[dict[str, Any]] | None = None,
+) -> str:
     tools_text = ", ".join(allowed_tools) if allowed_tools else "none"
+    failure_history_summary = _summarize_failure_history(mission_history)
     return (
         "You are an execution planner.\n"
         "Return ONLY valid JSON.\n"
@@ -31,7 +71,8 @@ def _build_planning_prompt(intent: Intent, allowed_tools: list[str]) -> str:
         f"Task: {intent.task}\n"
         f"Goal: {intent.goal}\n"
         f"Constraints: {intent.constraints or 'None'}\n"
-        f"Expected Output: {intent.output or 'None'}"
+        f"Expected Output: {intent.output or 'None'}\n"
+        f"Previous Failures Summary: {failure_history_summary}"
     )
 
 
@@ -80,9 +121,13 @@ def _normalize_plan(payload: Any, allowed_tools: set[str]) -> dict[str, list[dic
     return {"steps": normalized_steps}
 
 
-def create_plan(intent: Intent, llm: LLMProvider) -> Any:
+def create_plan(
+    intent: Intent,
+    llm: LLMProvider,
+    mission_history: list[dict[str, Any]] | None = None,
+) -> Any:
     allowed_tools = sorted(TOOL_REGISTRY.keys())
-    prompt = _build_planning_prompt(intent, allowed_tools)
+    prompt = _build_planning_prompt(intent, allowed_tools, mission_history=mission_history)
     raw_plan = llm.generate(prompt)
 
     try:
