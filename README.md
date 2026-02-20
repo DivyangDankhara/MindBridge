@@ -257,7 +257,12 @@ Contributions welcome in:
 
 ## License
 
-MIT License (recommended for open research projects)
+MindBridge is dual-licensed under:
+
+- MIT License
+- Apache License 2.0
+
+You may choose either license when using this software.
 
 ---
 
