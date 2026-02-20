@@ -9,14 +9,14 @@ from planner.planner import create_plan
 
 def main() -> None:
     project_root = Path(__file__).parent
-    intent_path = project_root / "examples" / "sales.intent"
+    intent_path = project_root / "examples" / "test.intent"
 
     intent = parse_intent_file(intent_path)
     llm = OpenAIProvider(model=DEFAULT_MODEL)
     plan = create_plan(intent, llm)
 
     if isinstance(plan, dict) and isinstance(plan.get("steps"), list):
-        execution_results = execute_plan(plan)
+        execution_results = execute_plan(plan, llm=llm)
         print("\nExecution results:")
         for item in execution_results:
             print(item)
