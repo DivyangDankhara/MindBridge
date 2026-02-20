@@ -6,6 +6,7 @@ from evaluator.evaluator import evaluate_goal
 from executor.tool_registry import execute_plan
 from intent.parser import parse_intent_file
 from llm.openai_provider import OpenAIProvider
+from memory.hybrid_retrieval import retrieve_relevant_memory
 from memory.procedural_extractor import extract_procedural_strategies
 from memory.procedural_store import load_procedural_strategies, save_procedural_strategy
 from memory.retrieval import find_similar_experiences
@@ -204,6 +205,18 @@ def main() -> None:
     else:
         print("No relevant learned strategies found.")
 
+    hybrid_memory_context = retrieve_relevant_memory(intent.task, intent.goal, top_k=5)
+    if hybrid_memory_context:
+        semantic_count = sum(1 for item in hybrid_memory_context if item.get("memory_type") == "semantic")
+        procedural_count = sum(1 for item in hybrid_memory_context if item.get("memory_type") == "procedural")
+        episodic_count = sum(1 for item in hybrid_memory_context if item.get("memory_type") == "episodic")
+        print(
+            "Loaded hybrid memory context "
+            f"(semantic={semantic_count}, procedural={procedural_count}, episodic={episodic_count})."
+        )
+    else:
+        print("No hybrid memory context found.")
+
     mission_history: list[dict[str, object]] = []
     mission_accomplished = False
 
@@ -216,6 +229,7 @@ def main() -> None:
             relevant_experiences=relevant_experiences,
             semantic_rules=relevant_semantic_rules,
             procedural_strategies=relevant_procedural_strategies,
+            hybrid_memory_context=hybrid_memory_context,
         )
 
         execution_results: list[dict[str, object]] = []

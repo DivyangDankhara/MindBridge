@@ -208,3 +208,4 @@ __marimo__/
 
 # Memory
 mindbridge/memory/*.jsonl
+mindbridge/memory/vector_index/

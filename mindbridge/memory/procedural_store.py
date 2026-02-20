@@ -4,6 +4,8 @@ import tempfile
 from pathlib import Path
 from typing import Any
 
+from memory.embedding_store import embed_text
+
 
 PROCEDURAL_FILE = Path(__file__).resolve().parent / "procedural.jsonl"
 SIMILARITY_THRESHOLD = 0.6
@@ -17,6 +19,19 @@ def ensure_procedural_file() -> Path:
     return PROCEDURAL_FILE
 
 
+def _normalize_embedding(value: Any) -> list[float] | None:
+    if not isinstance(value, list) or not value:
+        return None
+
+    embedding: list[float] = []
+    for item in value:
+        if isinstance(item, (int, float)):
+            embedding.append(float(item))
+            continue
+        return None
+    return embedding if embedding else None
+
+
 def _normalize_strategy(strategy: dict[str, Any]) -> dict[str, Any] | None:
     if not isinstance(strategy, dict):
         return None
@@ -26,6 +41,7 @@ def _normalize_strategy(strategy: dict[str, Any]) -> dict[str, Any] | None:
     steps_template = strategy.get("steps_template")
     confidence = strategy.get("confidence")
     derived_from = strategy.get("derived_from")
+    embedding = _normalize_embedding(strategy.get("embedding"))
 
     if not isinstance(strategy_name, str) or not strategy_name.strip():
         return None
@@ -50,13 +66,46 @@ def _normalize_strategy(strategy: dict[str, Any]) -> dict[str, Any] | None:
     except Exception:
         return None
 
-    return {
+    normalized = {
         "strategy_name": strategy_name.strip(),
         "applicable_context": applicable_context.strip(),
         "steps_template": normalized_steps,
         "confidence": max(0.0, min(1.0, confidence_value)),
         "derived_from": max(0, derived_from_value),
     }
+    if embedding is not None:
+        normalized["embedding"] = embedding
+    return normalized
+
+
+def _strategy_embedding_text(strategy: dict[str, Any]) -> str:
+    steps_template = strategy.get("steps_template", [])
+    steps_text = ""
+    if isinstance(steps_template, list):
+        steps_text = " ".join(step for step in steps_template if isinstance(step, str))
+    return (
+        f"{strategy.get('strategy_name', '')} "
+        f"{strategy.get('applicable_context', '')} "
+        f"{steps_text}"
+    ).strip()
+
+
+def _ensure_strategy_embedding(strategy: dict[str, Any]) -> dict[str, Any]:
+    normalized = _normalize_strategy(strategy)
+    if normalized is None:
+        return strategy
+
+    existing_embedding = _normalize_embedding(normalized.get("embedding"))
+    if existing_embedding is not None:
+        normalized["embedding"] = existing_embedding
+        return normalized
+
+    try:
+        normalized["embedding"] = embed_text(_strategy_embedding_text(normalized))
+    except Exception:
+        pass
+
+    return normalized
 
 
 def _strategy_text(strategy: dict[str, Any]) -> str:
@@ -120,7 +169,10 @@ def _merge_strategy(existing: dict[str, Any], incoming: dict[str, Any]) -> dict[
         if merged_steps:
             merged["steps_template"] = merged_steps
 
-    return merged
+    normalized = _normalize_strategy(merged)
+    if normalized is None:
+        return existing
+    return _ensure_strategy_embedding(normalized)
 
 
 def _consolidate_strategies(strategies: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -138,7 +190,7 @@ def _consolidate_strategies(strategies: list[dict[str, Any]]) -> list[dict[str, 
                 break
 
         if not merged:
-            consolidated.append(normalized)
+            consolidated.append(_ensure_strategy_embedding(normalized))
 
     return consolidated
 
@@ -191,8 +243,10 @@ def save_procedural_strategy(strategy: dict[str, Any]) -> None:
     if normalized is None:
         return
 
+    incoming_with_embedding = _ensure_strategy_embedding(normalized)
     current_strategies = load_procedural_strategies()
-    updated_strategies = _consolidate_strategies([*current_strategies, normalized])
+    updated_strategies = _consolidate_strategies([*current_strategies, incoming_with_embedding])
+    updated_strategies = [_ensure_strategy_embedding(item) for item in updated_strategies]
     _rewrite_strategies_safely(updated_strategies)
 
 

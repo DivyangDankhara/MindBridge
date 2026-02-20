@@ -113,6 +113,73 @@ def _summarize_procedural_strategies(procedural_strategies: list[dict[str, Any]]
     return "\n".join(lines) if lines else "* none"
 
 
+def _summarize_hybrid_memory_context(hybrid_memory_context: list[dict[str, Any]] | None) -> str:
+    if not hybrid_memory_context:
+        return (
+            "* Top semantic rules:\n"
+            "  * none\n"
+            "* Top procedural strategies:\n"
+            "  * none\n"
+            "* Top relevant episodic summaries:\n"
+            "  * none"
+        )
+
+    semantic_lines: list[str] = []
+    procedural_lines: list[str] = []
+    episodic_lines: list[str] = []
+
+    for item in hybrid_memory_context:
+        if not isinstance(item, dict):
+            continue
+
+        memory_type = item.get("memory_type")
+        data = item.get("data")
+        confidence = item.get("confidence")
+
+        if memory_type == "semantic" and isinstance(data, dict):
+            rule = data.get("rule")
+            if isinstance(rule, str) and rule.strip():
+                try:
+                    semantic_lines.append(f"  * {rule.strip()} (confidence={float(confidence):.2f})")
+                except Exception:
+                    semantic_lines.append(f"  * {rule.strip()}")
+            continue
+
+        if memory_type == "procedural" and isinstance(data, dict):
+            strategy_name = data.get("strategy_name")
+            steps_template = data.get("steps_template")
+            if isinstance(strategy_name, str) and strategy_name.strip():
+                procedural_lines.append(f"  * {strategy_name.strip()}")
+                procedural_lines.append("    steps:")
+                if isinstance(steps_template, list):
+                    for step in steps_template[:4]:
+                        if isinstance(step, str) and step.strip():
+                            procedural_lines.append(f"    * {step.strip()}")
+            continue
+
+        if memory_type == "episodic" and isinstance(data, dict):
+            result_summary = data.get("result_summary")
+            if isinstance(result_summary, str) and result_summary.strip():
+                episodic_lines.append(f"  * {result_summary.strip()}")
+            continue
+
+    if not semantic_lines:
+        semantic_lines = ["  * none"]
+    if not procedural_lines:
+        procedural_lines = ["  * none"]
+    if not episodic_lines:
+        episodic_lines = ["  * none"]
+
+    return (
+        "* Top semantic rules:\n"
+        f"{'\n'.join(semantic_lines)}\n"
+        "* Top procedural strategies:\n"
+        f"{'\n'.join(procedural_lines)}\n"
+        "* Top relevant episodic summaries:\n"
+        f"{'\n'.join(episodic_lines)}"
+    )
+
+
 def _build_planning_prompt(
     intent: Intent,
     allowed_tools: list[str],
@@ -120,12 +187,14 @@ def _build_planning_prompt(
     relevant_experiences: list[MissionExperience] | list[dict[str, Any]] | None = None,
     semantic_rules: list[dict[str, Any]] | None = None,
     procedural_strategies: list[dict[str, Any]] | None = None,
+    hybrid_memory_context: list[dict[str, Any]] | None = None,
 ) -> str:
     tools_text = ", ".join(allowed_tools) if allowed_tools else "none"
     failure_history_summary = _summarize_failure_history(mission_history)
     relevant_experiences_summary = _summarize_relevant_experiences(relevant_experiences)
     semantic_rules_summary = _summarize_semantic_rules(semantic_rules)
     procedural_strategies_summary = _summarize_procedural_strategies(procedural_strategies)
+    hybrid_memory_summary = _summarize_hybrid_memory_context(hybrid_memory_context)
     return (
         "You are an execution planner.\n"
         "Return ONLY valid JSON.\n"
@@ -156,9 +225,12 @@ def _build_planning_prompt(
         f"{semantic_rules_summary}\n\n"
         "Relevant learned strategies:\n"
         f"{procedural_strategies_summary}\n\n"
+        "Hybrid Memory Context:\n"
+        f"{hybrid_memory_summary}\n\n"
         "Planner must consider past successes and failures.\n"
         "Planner must consider these rules.\n"
-        "Planner must consider adapting these strategies."
+        "Planner must consider adapting these strategies.\n"
+        "Planner must prioritize high-confidence strategies."
     )
 
 
@@ -214,6 +286,7 @@ def create_plan(
     relevant_experiences: list[MissionExperience] | list[dict[str, Any]] | None = None,
     semantic_rules: list[dict[str, Any]] | None = None,
     procedural_strategies: list[dict[str, Any]] | None = None,
+    hybrid_memory_context: list[dict[str, Any]] | None = None,
 ) -> Any:
     allowed_tools = sorted(TOOL_REGISTRY.keys())
     prompt = _build_planning_prompt(
@@ -223,6 +296,7 @@ def create_plan(
         relevant_experiences=relevant_experiences,
         semantic_rules=semantic_rules,
         procedural_strategies=procedural_strategies,
+        hybrid_memory_context=hybrid_memory_context,
     )
     raw_plan = llm.generate(prompt)
 

@@ -5,6 +5,7 @@ from pathlib import Path
 from typing import Any
 
 from llm.base import LLMProvider
+from memory.embedding_store import embed_text
 
 
 SEMANTIC_FILE = Path(__file__).resolve().parent / "semantic.jsonl"
@@ -19,6 +20,19 @@ def ensure_semantic_file() -> Path:
     return SEMANTIC_FILE
 
 
+def _normalize_embedding(value: Any) -> list[float] | None:
+    if not isinstance(value, list) or not value:
+        return None
+
+    embedding: list[float] = []
+    for item in value:
+        if isinstance(item, (int, float)):
+            embedding.append(float(item))
+            continue
+        return None
+    return embedding if embedding else None
+
+
 def _normalize_rule(rule_data: dict[str, Any]) -> dict[str, Any] | None:
     if not isinstance(rule_data, dict):
         return None
@@ -27,6 +41,7 @@ def _normalize_rule(rule_data: dict[str, Any]) -> dict[str, Any] | None:
     context = rule_data.get("context")
     confidence = rule_data.get("confidence")
     derived_from = rule_data.get("derived_from")
+    embedding = _normalize_embedding(rule_data.get("embedding"))
 
     if not isinstance(rule, str) or not rule.strip():
         return None
@@ -42,12 +57,37 @@ def _normalize_rule(rule_data: dict[str, Any]) -> dict[str, Any] | None:
         return None
 
     confidence_value = max(0.0, min(1.0, confidence_value))
-    return {
+    normalized = {
         "rule": rule.strip(),
         "context": context.strip(),
         "confidence": confidence_value,
         "derived_from": max(0, derived_from_value),
     }
+    if embedding is not None:
+        normalized["embedding"] = embedding
+    return normalized
+
+
+def _rule_embedding_text(rule_data: dict[str, Any]) -> str:
+    return f"{rule_data.get('rule', '')} {rule_data.get('context', '')}".strip()
+
+
+def _ensure_rule_embedding(rule_data: dict[str, Any]) -> dict[str, Any]:
+    normalized = _normalize_rule(rule_data)
+    if normalized is None:
+        return rule_data
+
+    existing_embedding = _normalize_embedding(normalized.get("embedding"))
+    if existing_embedding is not None:
+        normalized["embedding"] = existing_embedding
+        return normalized
+
+    try:
+        normalized["embedding"] = embed_text(_rule_embedding_text(normalized))
+    except Exception:
+        pass
+
+    return normalized
 
 
 def _rule_text(rule_data: dict[str, Any]) -> str:
@@ -180,7 +220,9 @@ def _merge_rule(
         "derived_from": base_derived_from + 1,
     }
     normalized = _normalize_rule(merged)
-    return normalized if normalized is not None else existing
+    if normalized is None:
+        return existing
+    return _ensure_rule_embedding(normalized)
 
 
 def _rewrite_rules_safely(rules: list[dict[str, Any]]) -> None:
@@ -248,7 +290,7 @@ def _consolidate_with_llm(
             break
 
         if not merged:
-            consolidated.append(normalized)
+            consolidated.append(_ensure_rule_embedding(normalized))
 
     return consolidated
 
@@ -295,9 +337,11 @@ def save_semantic_rule(rule_data: dict[str, Any], llm: LLMProvider | None = None
     if normalized is None:
         return
 
+    incoming_with_embedding = _ensure_rule_embedding(normalized)
     current_rules = _consolidate_with_llm(load_semantic_rules(), llm=llm)
-    updated_rules = _merge_incoming_with_existing(current_rules, normalized, llm=llm)
+    updated_rules = _merge_incoming_with_existing(current_rules, incoming_with_embedding, llm=llm)
     final_rules = _consolidate_with_llm(updated_rules, llm=llm)
+    final_rules = [_ensure_rule_embedding(rule) for rule in final_rules]
     _rewrite_rules_safely(final_rules)
 
 
